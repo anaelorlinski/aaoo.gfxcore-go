@@ -94,6 +94,21 @@ type GradientKind struct {
 	Coords [6]Fl
 }
 
+// Interpolation says how the colours between two stops of a gradient are
+// computed.
+type Interpolation uint8
+
+const (
+	// InterpolatePremultiplied averages the colours multiplied by their
+	// alpha: a stop fading to transparent keeps its hue, whatever the
+	// colour of the transparent stop. It is the way of CSS gradients.
+	InterpolatePremultiplied Interpolation = iota
+	// InterpolateStraight averages the colour and the alpha separately: a
+	// fade from transparent white passes through pale tints. It is the
+	// way of SVG gradients.
+	InterpolateStraight
+)
+
 // GradientLayout is a gradient resolved to plain geometry: the renderer
 // interpolates between the stops and needs nothing else.
 type GradientLayout struct {
@@ -109,6 +124,10 @@ type GradientLayout struct {
 	// per-pixel pow) instead of the caller pre-sampling it into extra
 	// stops. nil = all-linear.
 	Exponents []Fl
+
+	// Interpolation says in what terms two colours are mixed; Exponents
+	// says how fast the mix goes from one to the other.
+	Interpolation Interpolation
 
 	GradientKind
 

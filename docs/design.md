@@ -26,9 +26,10 @@ written with:
 | group | methods |
 |---|---|
 | path | `MoveTo` `LineTo` `CubicTo` `ClosePath` `Rectangle` |
-| painting | `Paint` `DrawGradient` `DrawRasterImage` `DrawText` |
-| state | `OnNewStack` `State` and, on the state: `Transform` `GetTransform` `Clip` `SetColorRgba` `SetAlpha` `SetLineWidth` `SetDash` `SetStrokeOptions` `SetBlendingMode` `SetTextPaint` |
-| layers | `NewGroup` `DrawWithOpacity`, and on the state: `SetAlphaMask` `SetColorPattern` |
+| painting | `Paint` `DrawRasterImage` `DrawText` |
+| state | `OnNewStack` `State` and, on the state: `Transform` `GetTransform` `Clip` `SetLineWidth` `SetDash` `SetStrokeOptions` `SetTextPaint` |
+| paint | on the state, for the fills or for the strokes: `SetColorRgba` `SetAlpha` `SetColorGradient` `SetColorPattern`, and `NewPatternTile` for the tile of a pattern |
+| groups | `NewGroup` `DrawGroup`, with a `Composite`: opacity, mask, blend mode |
 | extent | `GetBoundingBox` `SetBoundingBox` |
 
 Layers are required: opacity, masks and patterns cannot be drawn without
@@ -58,11 +59,10 @@ Rules:
    interface documents which.
 2. **The lookup is on the current canvas, groups included.** A renderer
    implementing a capability must do so on every canvas it hands out from
-   `NewGroup`.
+   `NewGroup` and `NewPatternTile`.
 3. **A capability lives with its producer** unless two producers need it.
-   The three existing ones are CSS only and are in
-   `aaoo.webengine-go/backend`: `BoxShadowDrawer`, `TextShadowDrawer`,
-   `GradientFillPather`.
+   The two existing ones are CSS only and are in
+   `aaoo.webengine-go/backend`: `BoxShadowDrawer`, `TextShadowDrawer`.
 
 This is how a renderer gets to be better than the common denominator
 without the others paying for it.
@@ -153,13 +153,85 @@ Constraints to keep:
 - links and anchors, today on webengine's `Page`, are the same kind of
   data and would follow the same route.
 
+## Colour
+
+`RGBA` is a colour in sRGB: four floats, not premultiplied. It is what a
+producer computed, and it reaches a renderer unchanged: the draw engine
+keeps it in its paints and its gradient stops, writes it as it is in a PDF,
+and rounds it once, to pixels, when it rasterizes. A transparent stop keeps
+its colour, which a premultiplied type cannot hold.
+
+A gradient says how two stops are mixed (`Interpolation`), because the
+formats disagree: CSS mixes premultiplied colours, SVG the colours and the
+alpha separately.
+
+What is not there yet: a colour that names its space. hsl, lab, oklch and
+the like are ways of writing or of mixing colours; the CSS engine converts
+them, and a renderer only needs to know of them as the space a gradient is
+mixed in. CMYK, grey, wide gamut RGB and ICC profiles are spaces a device
+can be told to use: for those the colour type itself has to carry a space,
+which is a study of its own (a PDF for print is the case that needs it).
+
+## Paints
+
+A fill or a stroke is painted with a colour, a gradient or a pattern, and
+the three are set the same way, on the state. A gradient and a pattern are
+not drawings: they have no rectangle of their own, they paint whatever path
+or text is filled or stroked with them, through a matrix that places them.
+
+A pattern is a tile repeated at a step, `Pattern`. Its tile is drawn on a
+canvas of its own, `NewPatternTile`, in coordinates that start at the corner
+of the tile. A step larger than the tile leaves a space between two tiles,
+and one larger than what is painted shows the tile once: this is how the
+`space` and `no-repeat` of a CSS background are said, with nothing special
+for them. A tile that holds one raster image is kept as that image, so that
+a renderer draws it from its source.
+
+## Groups
+
+Whatever applies to an element as a whole goes through one call. The
+producer draws the element in a group, `NewGroup`, then puts the group on
+the canvas with `DrawGroup` and a `Composite` that says how: its opacity,
+its mask, its blend mode. An element that is half transparent, masked and
+blended is one group, so one offscreen image for a rasterizer and one form
+for a PDF.
+
+There is no state for this. A mask or a blend mode set "from now on" would
+have to be undone by the renderer at the end of a stack the producer does
+not name; the group is the thing the effect applies to, and the producer
+holds it.
+
+Rules:
+
+- **A group is drawn in the coordinates of the canvas it was created on**,
+  as they were when it was created.
+- **A group is put where it was drawn**, moved by what the transformation
+  of the canvas has changed since. A producer that does not touch the
+  transformation gets the group back in place; one that does places it.
+- **A group may be put several times.** A renderer may then keep it once: a
+  PDF form drawn at several places. Nothing does this yet (the PDF writer
+  writes the form each time), but nothing prevents it.
+- **A mask is a group** of the same canvas, drawn in the same coordinates
+  as the group it masks, and moved with it.
+- **A group that is not to be seen is not drawn.** The zero value of
+  `Composite` is "as it is", so an opacity of zero cannot mean hidden.
+
+What this shape is meant to carry later, without another change of the
+interface:
+
+| later | where it goes |
+|---|---|
+| filters of SVG and CSS (blur, colour matrix, drop shadow) | a field of `Composite`; a PDF has no filters, so a filtered group is an image there |
+| `mix-blend-mode`, `isolation`, `mask-image` of CSS | the fields that exist; the web engine only has to fill them |
+| a clip that is not a rectangle on a bitmap, an anti-aliased clip | a mask on a group |
+| shadows as "the group, blurred and moved" | the filter field; today they are drawn from their geometry, which stays vector in a PDF |
+| an SVG `<use>`, a symbol, a header repeated on every page | one group put several times |
+| the bounds of a group | the rectangle of `NewGroup`, which no renderer reads yet: it would bound an offscreen image and be the box of a PDF form |
+| structure for a tagged PDF | not here: see the node markers above. A marker is a record in what is drawn, so a group carries the markers of what was drawn in it. A group put several times is the case to watch: its content would belong to several nodes, and PDF wants each piece of content in one |
+
 ## Open points
 
-- `SetBlendingMode` takes a CSS keyword as a string; a typed enumeration
-  would be safer.
 - `GradientKind.Kind` is a string too.
-- `GradientFillPather` is stateful ("applies to the next `DrawGradient`").
-  A fill area passed with the gradient would be simpler; it has one caller.
 - `SetColorRgba` / `SetAlpha` select fill or stroke with a boolean.
 - `GetBoundingBox` / `SetBoundingBox` exist for groups whose extent is
   known only after drawing (SVG text) and for unbounded backgrounds.

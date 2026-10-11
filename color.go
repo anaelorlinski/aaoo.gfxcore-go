@@ -38,6 +38,8 @@ var _ color.Color = RGBA{}
 // so has valid values 0 <= c <= a.
 func (c RGBA) RGBA() (r, g, b, a uint32) {
 	c.R, c.G, c.B, c.A = clamp(c.R), clamp(c.G), clamp(c.B), clamp(c.A)
+	// rounded to the nearest: cutting the fraction off would make every
+	// colour a little darker than it is
 	sa := 0xFFFF * c.A
-	return uint32(c.R * sa), uint32(c.G * sa), uint32(c.B * sa), uint32(sa)
+	return uint32(c.R*sa + 0.5), uint32(c.G*sa + 0.5), uint32(c.B*sa + 0.5), uint32(sa + 0.5)
 }

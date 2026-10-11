@@ -2,13 +2,37 @@ package gfxcore
 
 import "github.com/anaelorlinski/aaoo.gfxcore-go/matrix"
 
+// Pattern is a paint that repeats a tile: it acts as a fill or stroke color,
+// with arbitrary content.
+//
+// The tile is a rectangle of Width by Height, whose top left corner is the
+// origin of the pattern. It is repeated every StepX and StepY: a step
+// larger than the tile leaves an empty space between two tiles, and a step
+// larger than what is painted shows the tile once.
+type Pattern struct {
+	// Tile is what is drawn in the tile, a canvas returned by
+	// [Canvas.NewPatternTile]. What it draws out of the tile is not shown.
+	Tile Canvas
+
+	// Width and Height are the size of the tile.
+	Width, Height Fl
+
+	// StepX and StepY are the distances between two tiles; zero is the size
+	// of the tile.
+	StepX, StepY Fl
+
+	// Transform maps the coordinates of the pattern to the ones it is
+	// painted in.
+	Transform matrix.Transform
+
+	// Opacity is the opacity of what is painted, in [0, 1]; zero is opaque,
+	// as one is.
+	Opacity Fl
+}
+
 // GraphicState exposes the settings for a group of graphic
 // operations.
 type GraphicState interface {
-	// SetAlphaMask inteprets `mask` as an alpha mask which should be applied
-	// to the painting done in the current graphic stack.
-	SetAlphaMask(mask Canvas)
-
 	// Establishes a new clip region
 	// by intersecting the current clip region
 	// with the current path as it would be filled by `Fill`
@@ -36,19 +60,15 @@ type GraphicState interface {
 	// `stroke` controls whether stroking or filling operations are concerned.
 	SetColorRgba(color RGBA, stroke bool)
 
-	// SetColorPattern set the current paint color to the given pattern.
-	// A pattern acts as a fill or stroke color, but permits complex textures.
-	// It consists of a rectangle, fill with arbitrary content, which will be replicated
-	// at fixed horizontal and vertical intervals to fill an area.
-	// (contentWidth, contentHeight) define the size of the pattern content.
-	// `mat` maps the pattern’s internal coordinate system to the one
-	// in which it will painted.
-	// `stroke` controls whether stroking or filling operations are concerned.
-	SetColorPattern(pattern Canvas, contentWidth, contentHeight Fl, mat matrix.Transform, stroke bool)
+	// SetColorPattern sets the paint of the fills, or of the strokes, to a
+	// pattern: a tile repeated at fixed intervals, see [Pattern].
+	SetColorPattern(pattern Pattern, stroke bool)
 
-	// SetBlendingMode sets the blending mode, which is a CSS blend mode
-	// keyword ("multiply", "screen", ...), shared by CSS and SVG.
-	SetBlendingMode(mode string)
+	// SetColorGradient sets the paint of the fills, or of the strokes, to a
+	// linear or radial gradient. `mat` maps the coordinates of the gradient
+	// to the ones it is painted in: the gradient is not bounded by a
+	// rectangle, it paints whatever is filled or stroked with it.
+	SetColorGradient(gradient GradientLayout, mat matrix.Transform, stroke bool)
 
 	// Sets the current line width to be used by `Stroke`.
 	// The line width value specifies the diameter of a pen
@@ -95,7 +115,7 @@ type GraphicState interface {
 
 // Canvas represents a 2D surface which is the target of graphic operations.
 // It may be used as the final output (like a PDF page or the screen),
-// or as intermediate container (see for instance DrawWithOpacity or SetAlphaMask)
+// or as intermediate container (see NewGroup and NewPatternTile)
 //
 // Canvas is what every renderer must implement. What only some renderers
 // can do better than the generic way is not here: it is an optional
@@ -114,14 +134,34 @@ type Canvas interface {
 	// State returns the current graphic state.
 	State() GraphicState
 
-	// NewGroup creates a new drawing target with the given
-	// bounding box. It may be filled by graphic operations
-	// before being passed to the `DrawWithOpacity`, `SetColorPattern`
-	// and `SetAlphaMask` methods.
+	// NewGroup creates a new drawing target, to be drawn on and then put on
+	// this canvas as a whole by `DrawGroup`, or used as the mask of another
+	// group. It is drawn in the coordinates of this canvas: it starts with
+	// its current transformation.
+	//
+	// The rectangle is the area the group is known to draw in, in those
+	// coordinates; a renderer may use it to bound what it allocates. A group
+	// whose extent is not known when it is created is given it afterwards
+	// with `SetBoundingBox`.
 	NewGroup(x, y, width, height Fl) Canvas
 
-	// DrawWithOpacity draw the given target to the main target, applying the given opacity (in [0,1]).
-	DrawWithOpacity(opacity Fl, group Canvas)
+	// DrawGroup puts a group created by `NewGroup` on this canvas, taken as
+	// a whole: with an opacity, through a mask, with a blend mode, see
+	// [Composite].
+	//
+	// The group is put where it was drawn. If the transformation of this
+	// canvas has changed since the group was created, the group moves by as
+	// much: a group can be drawn, then placed, and placed several times.
+	DrawGroup(group Canvas, composite Composite)
+
+	// NewPatternTile creates a new drawing target for the tile of a
+	// [Pattern], of the given size. It is drawn in coordinates of its own,
+	// whose origin is the top left corner of the tile, whatever the current
+	// transformation of this canvas is.
+	//
+	// A tile that only holds one raster image is kept as that image: a
+	// renderer draws it from its source, as [Canvas.DrawRasterImage] does.
+	NewPatternTile(width, height Fl) Canvas
 
 	// Paint actually shows the current path on the target,
 	// either stroking, filling or doing both, according to `op`.
@@ -165,10 +205,4 @@ type Canvas interface {
 	// DrawRasterImage draws the given image at the current point, with the given dimensions.
 	// Typical format for image.Content are PNG, JPEG, GIF.
 	DrawRasterImage(image RasterImage, width, height Fl)
-
-	// DrawGradient draws the given gradient at the current point.
-	// Solid gradient are already handled, meaning that only linear and radial
-	// must be taken care of.
-	// The gradient fills the rectangle (0, 0, width, height).
-	DrawGradient(gradient GradientLayout, width, height Fl)
 }
